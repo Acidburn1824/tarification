@@ -268,6 +268,56 @@ function computeEaster(year) {
   return new Date(year, month - 1, day);
 }
 
+
+// ============================================================
+// HELPER: Linky / TIC (PTEC) mapping -> widget status
+// ============================================================
+function _wtNormalize(str) {
+  if (str === null || str === undefined) return '';
+  try {
+    return String(str)
+      .toUpperCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[\s_\-]/g, '');
+  } catch (e) {
+    return String(str).toUpperCase();
+  }
+}
+
+/**
+ * Returns one of: 'hp' | 'hc' | 'hsc' | null
+ * Default heuristics:
+ * - contains 'HSC' => hsc
+ * - contains 'HC'  => hc
+ * - contains 'HP'  => hp
+ * Custom mapping can be provided via config.linky.map = { hc: [...], hp: [...], hsc: [...] }
+ */
+function mapLinkyPeriodToStatus(raw, map = null) {
+  const v = _wtNormalize(raw);
+  if (!v) return null;
+
+  if (map && typeof map === 'object') {
+    const entries = [
+      ['hsc', map.hsc],
+      ['hc', map.hc],
+      ['hp', map.hp],
+    ];
+    for (const [status, arr] of entries) {
+      if (!Array.isArray(arr)) continue;
+      for (const token of arr) {
+        const t = _wtNormalize(token);
+        if (t && v.includes(t)) return status;
+      }
+    }
+  }
+
+  if (v.includes('HSC')) return 'hsc';
+  if (v.includes('HC')) return 'hc';
+  if (v.includes('HP')) return 'hp';
+
+  return null;
+}
 function getTodayDayIndex(date) {
   // 0=Lundi ... 6=Dimanche, 7=Jour férié
   if (isFrenchPublicHoliday(date)) return 7;
@@ -420,6 +470,22 @@ const CARD_STYLES = `
   .status-badge.hp { background: var(--wt-orange); }
   .status-badge.hc { background: var(--wt-green); }
   .status-badge.hsc { background: var(--wt-blue); }
+
+
+  .linky-badge {
+    position: absolute;
+    left: 12px;
+    top: 10px;
+    background: rgba(255,255,255,0.18);
+    border: 1px solid rgba(255,255,255,0.28);
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 18px;
+    letter-spacing: 0.2px;
+    user-select: none;
+  }
 
   .config-btn {
     position: absolute;
@@ -852,10 +918,6 @@ class WidgetTarification extends HTMLElement {
   setConfig(config) {
     this._config = config;
     this._entityBase = config.entity_base || 'input_text.widget_tarif';
-    // Stockage:
-    // - 'local' (par défaut) : localStorage uniquement (zéro helper HA)
-    // - 'ha' : lit/écrit aussi dans input_text.* (compat avec ancienne version)
-    this._storageMode = (config.storage || 'local');
   }
 
   static getConfigElement() {
@@ -871,33 +933,28 @@ class WidgetTarification extends HTMLElement {
   }
 
   async _loadConfig() {
-    // Mode LOCAL par défaut : on ne dépend de rien côté HA.
+    // Try localStorage first (simpler, works without HA entities)
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       try {
         this._tarif = new TarificationConfig(JSON.parse(stored));
         return;
-      } catch (e) {
-        // ignore → on retombe sur une config neuve
-      }
+      } catch (e) { /* ignore */ }
     }
 
-    // Compat : si demandé explicitement, on tente la lecture HA (input_text.*)
-    if (this._storageMode === 'ha' && this._hass) {
+    // Try HA entities
+    if (this._hass) {
       const storage = new TarificationStorage(this._hass, this._entityBase);
       this._tarif = await storage.load();
-      return;
     }
-
-    this._tarif = new TarificationConfig();
   }
 
   async _saveConfig() {
     const json = JSON.stringify(this._tarif.toJSON());
     localStorage.setItem(STORAGE_KEY, json);
 
-    // Compat : uniquement si demandé explicitement
-    if (this._storageMode === 'ha' && this._hass) {
+    // Also try to save to HA entities
+    if (this._hass) {
       const storage = new TarificationStorage(this._hass, this._entityBase);
       try {
         await storage.save(this._tarif);
@@ -939,11 +996,35 @@ class WidgetTarification extends HTMLElement {
     const plages = this._tarif.getPlagesForDay(dayIdx);
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    // Determine current status
-    let currentStatus = 'hp';
+// LINKY / TIC override (optional)
+const linkyCfg = (this._config && this._config.linky) ? this._config.linky : {};
+const linkyEnabled = linkyCfg && linkyCfg.enabled === true;
+let linkyRaw = null;
+let linkyStatus = null;
+
+if (linkyEnabled && this._hass) {
+  const ent = linkyCfg.period_entity;
+  if (ent && this._hass.states && this._hass.states[ent]) {
+    const st = this._hass.states[ent];
+    if (linkyCfg.period_attribute) {
+      linkyRaw = st.attributes ? st.attributes[linkyCfg.period_attribute] : null;
+    } else {
+      linkyRaw = st.state;
+    }
+    linkyStatus = mapLinkyPeriodToStatus(linkyRaw, linkyCfg.map || null);
+  }
+}
+
+// Determine current status
+
+
+    let currentStatus = linkyStatus || 'hp';
     let nextChange = null;
     let nextChangeType = null;
 
+    const linkyFallbackEnabled = !(linkyCfg && linkyCfg.fallback_to_planning === false);
+
+    if (!linkyEnabled || (!linkyStatus && linkyFallbackEnabled)) {
     for (const p of plages) {
       const end = (p.debut + p.duree) % 1440;
       let inPlage = false;
@@ -960,6 +1041,7 @@ class WidgetTarification extends HTMLElement {
           currentStatus = 'hc';
         }
       }
+    }
     }
 
     // Find next transition
@@ -1003,12 +1085,23 @@ class WidgetTarification extends HTMLElement {
     const monthNames = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
     const dateStr = `${dayNames[now.getDay()]} ${now.getDate()} ${monthNames[now.getMonth()]} ${now.getFullYear()} à ${String(now.getHours()).padStart(2,'0')}h${String(now.getMinutes()).padStart(2,'0')}`;
 
-    const nextChangeStr = nextChangeType ? 
-      `Dans ${timeUntilStr}, je serai en ${nextStatusLabels[nextChangeType] || 'HP'}` : '';
+    const linkyLive = !!linkyStatus;
+    let nextChangeStr = '';
+    if (nextChangeType) {
+      if (linkyLive) {
+        if (linkyCfg && linkyCfg.show_estimated_next === true) {
+          nextChangeStr = `Estimation: dans ${timeUntilStr}, je serai en ${nextStatusLabels[nextChangeType] || 'HP'}`;
+        } else {
+          nextChangeStr = '';
+        }
+      } else {
+        nextChangeStr = `Dans ${timeUntilStr}, je serai en ${nextStatusLabels[nextChangeType] || 'HP'}`;
+      }
+    }
 
     return `
       <div class="header" style="position:relative;">
-        Widget tarification
+        Widget tarification ${linkyLive && (linkyCfg.show_badge !== false) ? '<span class="linky-badge">⚡ LINKY LIVE</span>' : ''}
         <button class="config-btn" data-action="open-config" title="Configuration">⚙</button>
       </div>
       <div class="timeline-container">
@@ -1809,6 +1902,18 @@ class WidgetTarificationEditor extends HTMLElement {
         .sort()
       : [];
 
+    const linky = (this._config && this._config.linky) ? this._config.linky : {};
+    const linkyEnabled = linky && linky.enabled === true;
+    const linkyEntity = linky && linky.period_entity ? linky.period_entity : '';
+    const linkyAttr = linky && linky.period_attribute ? linky.period_attribute : '';
+    const linkyFallback = !(linky && linky.fallback_to_planning === false);
+    const linkyShowBadge = !(linky && linky.show_badge === false);
+    const sensorOptions = this._hass ?
+      Object.keys(this._hass.states)
+        .filter(e => e.startsWith('sensor.'))
+        .sort()
+      : [];
+
     this.shadowRoot.innerHTML = `
       <style>
         :host {
@@ -1934,7 +2039,49 @@ class WidgetTarificationEditor extends HTMLElement {
           </datalist>
         </div>
 
+        
         <hr class="section-divider">
+        <div class="section-title">🔌 Linky / TIC (optionnel)</div>
+
+        <div class="editor-row">
+          <div class="toggle-row">
+            <label>Activer la source Linky (donnée "LIVE" du compteur)</label>
+            <div class="toggle-switch ${linkyEnabled ? 'on' : ''}" data-field="linky.enabled" data-mode="falseByDefault"></div>
+          </div>
+          <div class="desc">Si activé, la carte lit une entité (souvent <code>PTEC</code>) pour déterminer HP/HC en temps réel. Sinon, elle utilise votre planning.</div>
+        </div>
+
+        <div class="editor-row" style="${linkyEnabled ? '' : 'opacity:0.55; pointer-events:none;'}">
+          <label>Entité période tarifaire (ex: PTEC)</label>
+          <div class="desc">Choisissez le capteur qui indique la période en cours (HP/HC). Exemple : <code>sensor.zlinky_ptec</code></div>
+          <input type="text" id="linky_period_entity" value="${linkyEntity}" placeholder="sensor.zlinky_ptec" list="sensor-entities">
+          <datalist id="sensor-entities">
+            ${sensorOptions.map(e => `<option value="${e}">`).join('')}
+          </datalist>
+        </div>
+
+        <div class="editor-row" style="${linkyEnabled ? '' : 'opacity:0.55; pointer-events:none;'}">
+          <label>Attribut (optionnel)</label>
+          <div class="desc">Laissez vide si la valeur est dans le <code>state</code>. Sinon indiquez le nom d'attribut.</div>
+          <input type="text" id="linky_period_attribute" value="${linkyAttr}" placeholder="ptec">
+        </div>
+
+        <div class="editor-row" style="${linkyEnabled ? '' : 'opacity:0.55; pointer-events:none;'}">
+          <div class="toggle-row">
+            <label>Fallback planning si Linky indisponible</label>
+            <div class="toggle-switch ${linkyFallback ? 'on' : ''}" data-field="linky.fallback_to_planning" data-mode="trueByDefault"></div>
+          </div>
+          <div class="desc">Reviens automatiquement au planning si l'entité est absente/unknown/unavailable.</div>
+        </div>
+
+        <div class="editor-row" style="${linkyEnabled ? '' : 'opacity:0.55; pointer-events:none;'}">
+          <div class="toggle-row">
+            <label>Afficher le badge "LINKY LIVE"</label>
+            <div class="toggle-switch ${linkyShowBadge ? 'on' : ''}" data-field="linky.show_badge" data-mode="trueByDefault"></div>
+          </div>
+        </div>
+
+<hr class="section-divider">
         <div class="section-title">⚡ Affichage</div>
 
         <!-- Thème -->
@@ -1987,26 +2134,109 @@ class WidgetTarificationEditor extends HTMLElement {
       this._updateConfig('entity_base', e.target.value || undefined);
     });
 
+    const le = this.shadowRoot.getElementById('linky_period_entity');
+    if (le) {
+      le.addEventListener('input', (e) => {
+        this._updateConfig('linky.period_entity', e.target.value || undefined);
+      });
+    }
+
+    const la = this.shadowRoot.getElementById('linky_period_attribute');
+    if (la) {
+      la.addEventListener('input', (e) => {
+        this._updateConfig('linky.period_attribute', e.target.value || undefined);
+      });
+    }
+
     this.shadowRoot.getElementById('theme').addEventListener('change', (e) => {
       this._updateConfig('theme', e.target.value === 'default' ? undefined : e.target.value);
     });
 
+    const getByPath = (obj, path) => {
+      if (!obj || !path) return undefined;
+      const parts = path.split('.');
+      let cur = obj;
+      for (const p of parts) {
+        if (cur == null || typeof cur !== 'object') return undefined;
+        cur = cur[p];
+      }
+      return cur;
+    };
+
     this.shadowRoot.querySelectorAll('.toggle-switch').forEach(toggle => {
       toggle.addEventListener('click', () => {
         const field = toggle.dataset.field;
-        const currentVal = this._config[field] !== false;
-        this._updateConfig(field, !currentVal ? undefined : false);
+        const mode = toggle.dataset.mode || 'trueByDefault';
+
+        const v = getByPath(this._config, field);
+
+        // trueByDefault: enabled unless explicitly false
+        // falseByDefault: disabled unless explicitly true
+        const isOn = (mode === 'falseByDefault') ? (v === true) : (v !== false);
+
+        if (mode === 'falseByDefault') {
+          // store true to enable, remove key to disable
+          this._updateConfig(field, isOn ? undefined : true);
+        } else {
+          // store false to disable, remove key to enable
+          this._updateConfig(field, isOn ? false : undefined);
+        }
       });
     });
   }
 
   _updateConfig(key, value) {
     const newConfig = { ...this._config };
-    if (value === undefined) {
-      delete newConfig[key];
+
+    const setByPath = (obj, path, val) => {
+      const parts = path.split('.');
+      let cur = obj;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const p = parts[i];
+        if (!cur[p] || typeof cur[p] !== 'object') cur[p] = {};
+        cur = cur[p];
+      }
+      cur[parts[parts.length - 1]] = val;
+    };
+
+    const deleteByPath = (obj, path) => {
+      const parts = path.split('.');
+      const stack = [];
+      let cur = obj;
+      for (let i = 0; i < parts.length; i++) {
+        if (cur == null || typeof cur !== 'object') return;
+        stack.push([cur, parts[i]]);
+        cur = cur[parts[i]];
+      }
+      // delete leaf
+      const [leafParent, leafKey] = stack.pop();
+      delete leafParent[leafKey];
+
+      // cleanup empty objects up the chain
+      for (let i = stack.length - 1; i >= 0; i--) {
+        const [parent, key] = stack[i];
+        if (parent[key] && typeof parent[key] === 'object' && Object.keys(parent[key]).length === 0) {
+          delete parent[key];
+        } else {
+          break;
+        }
+      }
+    };
+
+    if (key.includes('.')) {
+      if (value === undefined) {
+        deleteByPath(newConfig, key);
+      } else {
+        setByPath(newConfig, key, value);
+      }
     } else {
-      newConfig[key] = value;
+      if (value === undefined) {
+        delete newConfig[key];
+      } else {
+        newConfig[key] = value;
+      }
     }
+
     this._config = newConfig;
 
     // Fire config-changed event for Lovelace
