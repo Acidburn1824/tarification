@@ -15,20 +15,16 @@ const FRENCH_PUBLIC_HOLIDAYS = [
 // ZLINKY / LINKY TIC SUPPORT
 // ============================================================
 const PTEC_MAP = {
-  // Historique HC/HP
   'HC..': { status: 'hc', label: 'Heures creuses', color: 'hc' },
   'HP..': { status: 'hp', label: 'Heures pleines', color: 'hp' },
-  // Historique Tempo
   'HCJB': { status: 'hc', label: 'HC Jour Bleu', color: 'hc', tempo: 'bleu' },
   'HPJB': { status: 'hp', label: 'HP Jour Bleu', color: 'hp', tempo: 'bleu' },
   'HCJW': { status: 'hc', label: 'HC Jour Blanc', color: 'hc', tempo: 'blanc' },
   'HPJW': { status: 'hp', label: 'HP Jour Blanc', color: 'hp', tempo: 'blanc' },
   'HCJR': { status: 'hc', label: 'HC Jour Rouge', color: 'hc', tempo: 'rouge' },
   'HPJR': { status: 'hp', label: 'HP Jour Rouge', color: 'hp', tempo: 'rouge' },
-  // Historique EJP
   'HN..': { status: 'hc', label: 'Heures Normales', color: 'hc' },
   'PM..': { status: 'hp', label: 'Pointe Mobile', color: 'hp' },
-  // Standard
   'HP': { status: 'hp', label: 'Heures pleines', color: 'hp' },
   'HC': { status: 'hc', label: 'Heures creuses', color: 'hc' },
   'HP HC': { status: 'hp', label: 'Heures pleines', color: 'hp' },
@@ -38,12 +34,9 @@ const PTEC_MAP = {
 function parsePTEC(stateValue) {
   if (!stateValue || stateValue === 'unknown' || stateValue === 'unavailable') return null;
   const trimmed = stateValue.trim();
-  // Direct match
   if (PTEC_MAP[trimmed]) return PTEC_MAP[trimmed];
-  // Try uppercase
   const upper = trimmed.toUpperCase();
   if (PTEC_MAP[upper]) return PTEC_MAP[upper];
-  // Fuzzy: contains HC or HP
   if (/HC/i.test(trimmed)) return { status: 'hc', label: 'Heures creuses', color: 'hc' };
   if (/HP/i.test(trimmed)) return { status: 'hp', label: 'Heures pleines', color: 'hp' };
   return null;
@@ -64,7 +57,6 @@ class TarificationConfig {
       this.superCreusesHiver = data.superCreusesHiver ?? false;
       this.superCreusesEte = data.superCreusesEte ?? false;
       this.superCreusesHorsSaison = data.superCreusesHorsSaison ?? false;
-      // 16 lignes: 0-7 hiver/hors saison, 8-15 été
       this.lignes = data.lignes ?? this._defaultLignes();
     } else {
       this.joursSpecifiques = false;
@@ -84,22 +76,21 @@ class TarificationConfig {
     const lignes = [];
     for (let i = 0; i < 16; i++) {
       lignes.push({
-        nbPlagesCode: '00',     // 2 chars: 00=1 plage, 10=2, 11=3
-        superCreuses: '0',       // 1 char
-        hc1Debut: '0000',        // 4 chars (HHmm)
-        hc1Duree: '0000',        // 4 chars (0Hmm)
-        hc2Debut: '0000',        // 4 chars
-        hc2Duree: '000',         // 3 chars
-        hc3Debut: '0000',        // 4 chars
-        hc3Duree: '000',         // 3 chars
-        hscDebut: '0000',        // 4 chars
-        hscDuree: '000',         // 3 chars
+        nbPlagesCode: '00',
+        superCreuses: '0',
+        hc1Debut: '0000',
+        hc1Duree: '0000',
+        hc2Debut: '0000',
+        hc2Duree: '000',
+        hc3Debut: '0000',
+        hc3Duree: '000',
+        hscDebut: '0000',
+        hscDuree: '000',
       });
     }
     return lignes;
   }
 
-  // Build p[14] string for a line (32 chars)
   buildP14(lineIdx) {
     const l = this.lignes[lineIdx];
     return l.nbPlagesCode + l.superCreuses +
@@ -109,56 +100,47 @@ class TarificationConfig {
            l.hscDebut + l.hscDuree;
   }
 
-  // Build p[12] mask string
   buildP12() {
     return this.joursMask.map(v => v ? '1' : '0').join('');
   }
 
-  // Get effective number of HC slots for a given line
   getNbPlages(lineIdx) {
     if (!this.saisonnalite) return this.nbPlagesHorsSaison;
     return lineIdx < 8 ? this.nbPlagesHiver : this.nbPlagesEte;
   }
 
-  // Check if a day index is a "jour spécifique"
   isJourSpecifique(dayIdx) {
     return this.joursSpecifiques && this.joursMask[dayIdx];
   }
 
-  // Get the plages for display for a given day (0-7)
   getPlagesForDay(dayIdx) {
-    const lineIdx = dayIdx; // hiver/hors saison
+    const lineIdx = dayIdx;
     const l = this.lignes[lineIdx];
     const plages = [];
 
     if (this.isJourSpecifique(dayIdx)) {
-      // 24h HC
       plages.push({ debut: 0, duree: 1440, type: 'hc' });
       return plages;
     }
 
     const nbPlages = this.getNbPlages(lineIdx);
 
-    // HC1
     const hc1Start = this._parseTime(l.hc1Debut);
     const hc1Dur = this._parseDuree4(l.hc1Duree);
     if (hc1Dur > 0) plages.push({ debut: hc1Start, duree: hc1Dur, type: 'hc' });
 
-    // HC2
     if (nbPlages >= 2) {
       const hc2Start = this._parseTime(l.hc2Debut);
       const hc2Dur = this._parseDuree3(l.hc2Duree);
       if (hc2Dur > 0) plages.push({ debut: hc2Start, duree: hc2Dur, type: 'hc' });
     }
 
-    // HC3
     if (nbPlages >= 3) {
       const hc3Start = this._parseTime(l.hc3Debut);
       const hc3Dur = this._parseDuree3(l.hc3Duree);
       if (hc3Dur > 0) plages.push({ debut: hc3Start, duree: hc3Dur, type: 'hc' });
     }
 
-    // HSC
     if (l.superCreuses === '1') {
       const hscStart = this._parseTime(l.hscDebut);
       const hscDur = this._parseDuree3(l.hscDuree);
@@ -169,21 +151,18 @@ class TarificationConfig {
   }
 
   _parseTime(str) {
-    // "0336" → 216 minutes
     const h = parseInt(str.substring(0, 2), 10);
     const m = parseInt(str.substring(2, 4), 10);
     return h * 60 + m;
   }
 
   _parseDuree4(str) {
-    // "0400" → 240 minutes, "2400" → 1440
     const h = parseInt(str.substring(0, 2), 10);
     const m = parseInt(str.substring(2, 4), 10);
     return h * 60 + m;
   }
 
   _parseDuree3(str) {
-    // "400" → 240 minutes
     const h = parseInt(str.substring(0, 1), 10);
     const m = parseInt(str.substring(1, 3), 10);
     return h * 60 + m;
@@ -216,13 +195,11 @@ class TarificationStorage {
 
   async save(config) {
     const json = JSON.stringify(config.toJSON());
-    // Split into chunks of 250 chars across multiple input_text entities
     const chunkSize = 250;
     const chunks = [];
     for (let i = 0; i < json.length; i += chunkSize) {
       chunks.push(json.substring(i, i + chunkSize));
     }
-    // Save number of chunks
     try {
       for (let i = 0; i < chunks.length && i < 10; i++) {
         await this.hass.callService('input_text', 'set_value', {
@@ -230,7 +207,6 @@ class TarificationStorage {
           value: chunks[i]
         });
       }
-      // Save chunk count
       await this.hass.callService('input_text', 'set_value', {
         entity_id: `${this.entityBase}_meta`,
         value: `chunks:${chunks.length}`
@@ -259,7 +235,6 @@ class TarificationStorage {
       console.warn('Widget Tarification: Chargement HA échoué, fallback localStorage', e);
     }
 
-    // Fallback localStorage
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       try {
@@ -276,10 +251,9 @@ class TarificationStorage {
 function isFrenchPublicHoliday(date) {
   const mmdd = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   if (FRENCH_PUBLIC_HOLIDAYS.includes(mmdd)) return true;
-  // Easter-based holidays (Pâques, Ascension, Pentecôte)
   const year = date.getFullYear();
   const easter = computeEaster(year);
-  const easterBased = [0, 1, 39, 49, 50]; // Pâques, lundi Pâques, Ascension, Pentecôte dim, Pentecôte lun
+  const easterBased = [0, 1, 39, 49, 50];
   for (const offset of easterBased) {
     const d = new Date(easter);
     d.setDate(d.getDate() + offset);
@@ -307,14 +281,13 @@ function computeEaster(year) {
 }
 
 function getTodayDayIndex(date) {
-  // 0=Lundi ... 6=Dimanche, 7=Jour férié
   if (isFrenchPublicHoliday(date)) return 7;
-  const jsDay = date.getDay(); // 0=Sunday
+  const jsDay = date.getDay();
   return jsDay === 0 ? 6 : jsDay - 1;
 }
 
 // ============================================================
-// STYLES
+// STYLES — fond transparent + textes adaptés
 // ============================================================
 const CARD_STYLES = `
   :host {
@@ -328,21 +301,21 @@ const CARD_STYLES = `
     --wt-blue: #4a90d9;
     --wt-blue-light: #7ab8f5;
     --wt-red: #d9534f;
-    --wt-bg: #fff;
-    --wt-bg-section: #fafafa;
-    --wt-border: #e0e0e0;
-    --wt-text: #333;
-    --wt-text-light: #777;
+    --wt-bg: transparent;
+    --wt-bg-section: rgba(255,255,255,0.08);
+    --wt-border: rgba(255,255,255,0.15);
+    --wt-text: #ffffff;
+    --wt-text-light: rgba(255,255,255,0.6);
     --wt-radius: 8px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     display: block;
   }
 
   .card-container {
-    background: var(--wt-bg);
+    background: transparent;
     border-radius: var(--wt-radius);
     overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    box-shadow: none;
   }
 
   /* HEADER */
@@ -458,6 +431,7 @@ const CARD_STYLES = `
   .status-badge.hp { background: var(--wt-orange); }
   .status-badge.hc { background: var(--wt-green); }
   .status-badge.hsc { background: var(--wt-blue); }
+
   .tempo-badge {
     display: inline-block; padding: 2px 8px; border-radius: 10px;
     font-size: 11px; font-weight: 600; color: white; margin-left: 6px;
@@ -465,6 +439,7 @@ const CARD_STYLES = `
   .tempo-badge.tempo-bleu { background: #2196F3; }
   .tempo-badge.tempo-blanc { background: #9E9E9E; }
   .tempo-badge.tempo-rouge { background: #F44336; }
+
   .zlinky-badge {
     display: inline-block; padding: 2px 6px; border-radius: 8px;
     font-size: 9px; font-weight: 500; color: var(--wt-text-light);
@@ -550,7 +525,7 @@ const CARD_STYLES = `
     position: relative;
     width: 44px;
     height: 24px;
-    background: #ccc;
+    background: rgba(255,255,255,0.2);
     border-radius: 12px;
     cursor: pointer;
     transition: background 0.3s;
@@ -592,7 +567,7 @@ const CARD_STYLES = `
     border-radius: 16px;
     font-size: 12px;
     cursor: pointer;
-    background: white;
+    background: rgba(255,255,255,0.05);
     color: var(--wt-text-light);
     transition: all 0.2s;
     user-select: none;
@@ -635,7 +610,7 @@ const CARD_STYLES = `
   }
 
   .number-selector button:hover {
-    background: #e8e8e8;
+    background: rgba(255,255,255,0.15);
   }
 
   .number-selector .value {
@@ -680,7 +655,7 @@ const CARD_STYLES = `
   }
 
   .time-digit-group button:hover {
-    background: #e0e0e0;
+    background: rgba(255,255,255,0.15);
   }
 
   .time-digit-group .digit {
@@ -692,7 +667,7 @@ const CARD_STYLES = `
     font-size: 20px;
     font-weight: 600;
     color: var(--wt-text);
-    background: white;
+    background: rgba(255,255,255,0.1);
     border: 1.5px solid var(--wt-border);
     border-radius: 4px;
     margin: 2px 0;
@@ -731,7 +706,7 @@ const CARD_STYLES = `
   }
 
   .duration-selector button:hover {
-    background: #e0e0e0;
+    background: rgba(255,255,255,0.15);
   }
 
   .duration-selector .value {
@@ -760,7 +735,7 @@ const CARD_STYLES = `
   .hc-block-title {
     font-size: 13px;
     font-weight: 600;
-    color: var(--wt-green-dark);
+    color: var(--wt-green-light);
     margin-bottom: 10px;
   }
 
@@ -780,17 +755,17 @@ const CARD_STYLES = `
 
   /* HSC BLOCK */
   .hsc-block {
-    background: #f0f5ff;
+    background: rgba(74,144,217,0.15);
     border-radius: var(--wt-radius);
     padding: 12px;
     margin-bottom: 12px;
-    border: 1px solid #d0dfff;
+    border: 1px solid rgba(74,144,217,0.3);
   }
 
   .hsc-block-title {
     font-size: 13px;
     font-weight: 600;
-    color: var(--wt-blue);
+    color: var(--wt-blue-light);
     margin-bottom: 10px;
   }
 
@@ -809,7 +784,7 @@ const CARD_STYLES = `
     padding: 8px 16px;
     border: 1.5px solid var(--wt-border);
     border-radius: 6px;
-    background: white;
+    background: rgba(255,255,255,0.05);
     cursor: pointer;
     font-size: 13px;
     color: var(--wt-text);
@@ -817,7 +792,7 @@ const CARD_STYLES = `
   }
 
   .nav-btn:hover {
-    background: var(--wt-bg-section);
+    background: rgba(255,255,255,0.12);
   }
 
   .nav-btn.primary {
@@ -831,8 +806,8 @@ const CARD_STYLES = `
   }
 
   .nav-btn.cancel {
-    color: var(--wt-red);
-    border-color: var(--wt-red);
+    color: #ff6b6b;
+    border-color: #ff6b6b;
   }
 
   .page-indicator {
@@ -886,7 +861,7 @@ class WidgetTarification extends HTMLElement {
     this._config = {};
     this._hass = null;
     this._tarif = new TarificationConfig();
-    this._mode = 'display'; // 'display' or 'config'
+    this._mode = 'display';
     this._configPage = 1;
     this._timerInterval = null;
   }
@@ -898,7 +873,6 @@ class WidgetTarification extends HTMLElement {
       this._initialized = true;
       this._loadConfig().then(() => this._render());
     } else if (this._sensorPTEC && this._mode === 'display') {
-      // Re-render if PTEC entity state changed
       const oldState = oldHass && oldHass.states[this._sensorPTEC] ? oldHass.states[this._sensorPTEC].state : null;
       const newState = hass.states[this._sensorPTEC] ? hass.states[this._sensorPTEC].state : null;
       if (oldState !== newState) {
@@ -926,7 +900,6 @@ class WidgetTarification extends HTMLElement {
   }
 
   async _loadConfig() {
-    // Try localStorage first (simpler, works without HA entities)
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       try {
@@ -935,7 +908,6 @@ class WidgetTarification extends HTMLElement {
       } catch (e) { /* ignore */ }
     }
 
-    // Try HA entities
     if (this._hass) {
       const storage = new TarificationStorage(this._hass, this._entityBase);
       this._tarif = await storage.load();
@@ -946,7 +918,6 @@ class WidgetTarification extends HTMLElement {
     const json = JSON.stringify(this._tarif.toJSON());
     localStorage.setItem(STORAGE_KEY, json);
 
-    // Also try to save to HA entities
     if (this._hass) {
       const storage = new TarificationStorage(this._hass, this._entityBase);
       try {
@@ -989,7 +960,6 @@ class WidgetTarification extends HTMLElement {
     const plages = this._tarif.getPlagesForDay(dayIdx);
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    // Determine current status
     let currentStatus = 'hp';
     let nextChange = null;
     let nextChangeType = null;
@@ -1000,7 +970,6 @@ class WidgetTarification extends HTMLElement {
       if (p.debut + p.duree <= 1440) {
         inPlage = currentMinutes >= p.debut && currentMinutes < p.debut + p.duree;
       } else {
-        // Wraps midnight
         inPlage = currentMinutes >= p.debut || currentMinutes < end;
       }
       if (inPlage) {
@@ -1012,7 +981,6 @@ class WidgetTarification extends HTMLElement {
       }
     }
 
-    // Find next transition
     const sortedEvents = [];
     for (const p of plages) {
       sortedEvents.push({ time: p.debut, event: 'start', type: p.type });
@@ -1020,7 +988,6 @@ class WidgetTarification extends HTMLElement {
     }
     sortedEvents.sort((a, b) => a.time - b.time);
 
-    // Find next event after current time
     for (const evt of sortedEvents) {
       if (evt.time > currentMinutes) {
         nextChange = evt.time;
@@ -1029,11 +996,11 @@ class WidgetTarification extends HTMLElement {
       }
     }
     if (nextChange === null && sortedEvents.length > 0) {
-      nextChange = sortedEvents[0].time + 1440; // Tomorrow
+      nextChange = sortedEvents[0].time + 1440;
       nextChangeType = sortedEvents[0].event === 'start' ? sortedEvents[0].type : 'hp';
     }
 
-    const minutesUntilChange = nextChange !== null ? 
+    const minutesUntilChange = nextChange !== null ?
       (nextChange > currentMinutes ? nextChange - currentMinutes : nextChange + 1440 - currentMinutes) : null;
 
     const timeUntilStr = minutesUntilChange !== null ? this._formatMinutes(minutesUntilChange) : '';
@@ -1041,7 +1008,6 @@ class WidgetTarification extends HTMLElement {
     const statusLabels = { hp: 'Heures pleines', hc: 'Heures creuses', hsc: 'Heures super creuses' };
     const nextStatusLabels = { hp: 'HP', hc: 'HC', hsc: 'HSC' };
 
-    // ZLinky/PTEC real-time override
     let ptecInfo = null;
     let tempoDay = null;
     if (this._sensorPTEC && this._hass) {
@@ -1055,19 +1021,15 @@ class WidgetTarification extends HTMLElement {
       }
     }
 
-    // Time labels for the bar
     const timeLabels = this._getTimeLabels(plages);
     const cursorPos = (currentMinutes / 1440) * 100;
-
-    // Segments
     const segments = this._buildSegments(plages);
 
-    // Date string
     const dayNames = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
     const monthNames = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
     const dateStr = `${dayNames[now.getDay()]} ${now.getDate()} ${monthNames[now.getMonth()]} ${now.getFullYear()} à ${String(now.getHours()).padStart(2,'0')}h${String(now.getMinutes()).padStart(2,'0')}`;
 
-    const nextChangeStr = nextChangeType ? 
+    const nextChangeStr = nextChangeType ?
       `Dans ${timeUntilStr}, je serai en ${nextStatusLabels[nextChangeType] || 'HP'}` : '';
 
     return `
@@ -1120,7 +1082,6 @@ class WidgetTarification extends HTMLElement {
       labels.push({ pos: startPos, label: this._minutesToTime(p.debut) });
       labels.push({ pos: endPos, label: this._minutesToTime(endMin) });
     }
-    // Deduplicate close labels
     labels.sort((a, b) => a.pos - b.pos);
     const filtered = [];
     for (const l of labels) {
@@ -1141,19 +1102,10 @@ class WidgetTarification extends HTMLElement {
           type: p.type
         });
       } else {
-        // Wrap around midnight
         const firstPart = 1440 - p.debut;
         const secondPart = p.duree - firstPart;
-        segments.push({
-          left: (p.debut / 1440) * 100,
-          width: (firstPart / 1440) * 100,
-          type: p.type
-        });
-        segments.push({
-          left: 0,
-          width: (secondPart / 1440) * 100,
-          type: p.type
-        });
+        segments.push({ left: (p.debut / 1440) * 100, width: (firstPart / 1440) * 100, type: p.type });
+        segments.push({ left: 0, width: (secondPart / 1440) * 100, type: p.type });
       }
     }
     return segments;
@@ -1177,7 +1129,7 @@ class WidgetTarification extends HTMLElement {
     if (this._timerInterval) clearInterval(this._timerInterval);
     this._timerInterval = setInterval(() => {
       if (this._mode === 'display') this._render();
-    }, 60000); // Update every minute
+    }, 60000);
   }
 
   _bindDisplayEvents(card) {
@@ -1216,13 +1168,9 @@ class WidgetTarification extends HTMLElement {
           ◀ Retour
         </button>
         ${this._configPage < totalPages ? `
-          <button class="nav-btn primary" data-action="config-next">
-            Continuer ▶
-          </button>
+          <button class="nav-btn primary" data-action="config-next">Continuer ▶</button>
         ` : `
-          <button class="nav-btn primary" data-action="config-save">
-            ✓ Valider
-          </button>
+          <button class="nav-btn primary" data-action="config-save">✓ Valider</button>
         `}
       </div>
       <div style="display:flex;justify-content:center;padding:4px 16px 8px;">
@@ -1232,11 +1180,9 @@ class WidgetTarification extends HTMLElement {
     `;
   }
 
-  // ---- PAGE 1 ----
   _renderConfigPage1() {
     const t = this._tarif;
     return `
-      <!-- Jours spécifiques -->
       <div class="config-section">
         <div class="section-header">
           <div>
@@ -1247,24 +1193,22 @@ class WidgetTarification extends HTMLElement {
         </div>
         <div class="days-grid">
           ${DAYS.map((d, i) => `
-            <div class="day-btn ${t.joursMask[i] ? 'active' : ''} ${!t.joursSpecifiques ? 'disabled' : ''}" 
+            <div class="day-btn ${t.joursMask[i] ? 'active' : ''} ${!t.joursSpecifiques ? 'disabled' : ''}"
                  data-action="toggle-day" data-day="${i}">${d}</div>
           `).join('')}
         </div>
       </div>
 
-      <!-- Saisonnalité -->
       <div class="config-section">
         <div class="section-header">
           <div>
             <div class="section-title">Saisonnalité</div>
-            <div class="section-desc">Votre abonnement comporte des plages d'Heures Creuses différentes en période estivale et en période hivernale (du 1er avril au 31 octobre ou du 1er novembre au 31 mars)</div>
+            <div class="section-desc">Votre abonnement comporte des plages différentes en période estivale et hivernale</div>
           </div>
           <div class="toggle ${t.saisonnalite ? 'active' : ''}" data-action="toggle-saison"></div>
         </div>
       </div>
 
-      <!-- Nombre de plages -->
       <div class="config-section">
         <div class="section-title">Nombre de plage d'heures creuses sur 24 heures</div>
         <div style="margin-top:10px;">
@@ -1283,10 +1227,9 @@ class WidgetTarification extends HTMLElement {
         </div>
       </div>
 
-      <!-- Heures super creuses -->
       <div class="config-section">
         <div class="section-title">Heures super Creuses</div>
-        <div class="section-desc">Votre abonnement comporte une plage d'Heures super Creuses (sous-ensemble d'une plage d'Heures Creuses bénéficiant d'une tarification encore plus avantageuse)</div>
+        <div class="section-desc">Plage d'Heures super Creuses (tarification encore plus avantageuse)</div>
         <div style="margin-top:8px;">
           ${t.saisonnalite ? `
             <div class="season-row">
@@ -1307,97 +1250,54 @@ class WidgetTarification extends HTMLElement {
     `;
   }
 
-  // ---- PAGE 2: HC times (hiver or hors saison) ----
   _renderConfigPage2() {
     const t = this._tarif;
     const nbPlages = t.saisonnalite ? t.nbPlagesHiver : t.nbPlagesHorsSaison;
-    const lineRef = 0; // Use line 0 as reference (non-specific day)
-    const l = t.lignes[lineRef];
+    const l = t.lignes[0];
     const hasHSC = t.saisonnalite ? t.superCreusesHiver : t.superCreusesHorsSaison;
     const label = t.saisonnalite ? ' (période hivernale)' : '';
 
     let html = `<div class="section-title">Plages d'heures creuses${label}</div>`;
-
-    // HC1
     html += this._renderHCBlock('HC1 - Plage principale', l.hc1Debut, l.hc1Duree, 'hc1', true);
-
-    // HC2
-    if (nbPlages >= 2) {
-      html += this._renderHCBlock('HC2 - Plage secondaire', l.hc2Debut, l.hc2Duree, 'hc2', false);
-    }
-
-    // HC3
-    if (nbPlages >= 3) {
-      html += this._renderHCBlock('HC3 - 2ème plage secondaire', l.hc3Debut, l.hc3Duree, 'hc3', false);
-    }
-
-    // HSC
-    if (hasHSC) {
-      html += this._renderHSCBlock('Heures super creuses', l.hscDebut, l.hscDuree, 'hsc');
-    }
-
+    if (nbPlages >= 2) html += this._renderHCBlock('HC2 - Plage secondaire', l.hc2Debut, l.hc2Duree, 'hc2', false);
+    if (nbPlages >= 3) html += this._renderHCBlock('HC3 - 2ème plage secondaire', l.hc3Debut, l.hc3Duree, 'hc3', false);
+    if (hasHSC) html += this._renderHSCBlock('Heures super creuses', l.hscDebut, l.hscDuree, 'hsc');
     return html;
   }
 
-  // ---- PAGE 3 (with season): HC times (été) ----
   _renderConfigPage3() {
     const t = this._tarif;
     const nbPlages = t.nbPlagesEte;
-    const lineRef = 8; // été lines
-    const l = t.lignes[lineRef];
+    const l = t.lignes[8];
     const hasHSC = t.superCreusesEte;
 
     let html = `<div class="section-title">Plages d'heures creuses (période estivale)</div>`;
-
     html += this._renderHCBlock('HC1 - Plage principale', l.hc1Debut, l.hc1Duree, 'hc1-ete', true);
-
-    if (nbPlages >= 2) {
-      html += this._renderHCBlock('HC2 - Plage secondaire', l.hc2Debut, l.hc2Duree, 'hc2-ete', false);
-    }
-
-    if (nbPlages >= 3) {
-      html += this._renderHCBlock('HC3 - 2ème plage secondaire', l.hc3Debut, l.hc3Duree, 'hc3-ete', false);
-    }
-
-    if (hasHSC) {
-      html += this._renderHSCBlock('Heures super creuses', l.hscDebut, l.hscDuree, 'hsc-ete');
-    }
-
+    if (nbPlages >= 2) html += this._renderHCBlock('HC2 - Plage secondaire', l.hc2Debut, l.hc2Duree, 'hc2-ete', false);
+    if (nbPlages >= 3) html += this._renderHCBlock('HC3 - 2ème plage secondaire', l.hc3Debut, l.hc3Duree, 'hc3-ete', false);
+    if (hasHSC) html += this._renderHSCBlock('Heures super creuses', l.hscDebut, l.hscDuree, 'hsc-ete');
     return html;
   }
 
-  // ---- PAGE 3 (no season): Jours spécifiques times ----
   _renderConfigPage3NoSeason() {
     const t = this._tarif;
     if (!t.joursSpecifiques || t.joursMask.every(v => !v)) {
       return `
         <div class="section-title">Configuration des jours spécifiques</div>
-        <div class="section-desc">Aucun jour spécifique n'a été défini. Les jours spécifiques sont en heures creuses 24h/24.</div>
+        <div class="section-desc">Aucun jour spécifique défini. Les jours spécifiques sont en heures creuses 24h/24.</div>
       `;
     }
-
-    const specificDays = [];
-    DAYS.forEach((d, i) => {
-      if (t.joursMask[i]) specificDays.push(d);
-    });
-
+    const specificDays = DAYS.filter((d, i) => t.joursMask[i]);
     return `
       <div class="section-title">Jours spécifiques</div>
-      <div class="section-desc">
-        Les jours suivants sont configurés en heures creuses 24h/24 : <strong>${specificDays.join(', ')}</strong>.
-      </div>
-      <div class="section-desc" style="margin-top:8px;">
-        Si vous avez des plages horaires spécifiques pour ces jours (différentes de 24h HC), cette fonctionnalité sera disponible dans une prochaine version.
-      </div>
+      <div class="section-desc">Les jours suivants sont en heures creuses 24h/24 : <strong>${specificDays.join(', ')}</strong>.</div>
     `;
   }
 
-  // ---- PAGE 4 (with season): Jours spécifiques ----
   _renderConfigPage4() {
     return this._renderConfigPage3NoSeason();
   }
 
-  // ---- COMPONENT RENDERERS ----
   _renderNumberSelector(value, id) {
     return `
       <div class="number-selector">
@@ -1409,7 +1309,6 @@ class WidgetTarification extends HTMLElement {
   }
 
   _renderTimeSelector(timeStr, id) {
-    // timeStr = "0336"
     const d0 = timeStr[0], d1 = timeStr[1], d2 = timeStr[2], d3 = timeStr[3];
     return `
       <div class="time-selector">
@@ -1439,7 +1338,6 @@ class WidgetTarification extends HTMLElement {
   }
 
   _renderDurationSelector(dureeStr, id, is4Char) {
-    // is4Char: true for HC1 (4 chars "0400"), false for HC2/HC3/HSC (3 chars "400")
     let display;
     if (is4Char) {
       const h = parseInt(dureeStr.substring(0, 2), 10);
@@ -1505,7 +1403,6 @@ class WidgetTarification extends HTMLElement {
       const t = this._tarif;
 
       switch (action) {
-        // Navigation
         case 'config-back':
           if (this._configPage > 1) { this._configPage--; this._render(); }
           break;
@@ -1525,12 +1422,10 @@ class WidgetTarification extends HTMLElement {
           this._render();
           break;
 
-        // Page 1 toggles
         case 'toggle-jours-spec':
           t.joursSpecifiques = !t.joursSpecifiques;
           if (!t.joursSpecifiques) {
             t.joursMask = [false, false, false, false, false, false, false, false];
-            // Reset specific day lines
             for (let i = 0; i < 8; i++) {
               this._resetJourSpecLine(i);
               this._resetJourSpecLine(i + 8);
@@ -1544,7 +1439,6 @@ class WidgetTarification extends HTMLElement {
           const dayIdx = parseInt(target.dataset.day, 10);
           t.joursMask[dayIdx] = !t.joursMask[dayIdx];
           if (t.joursMask[dayIdx]) {
-            // Set 24h HC for this day
             this._setJourSpec24h(dayIdx);
             this._setJourSpec24h(dayIdx + 8);
           } else {
@@ -1587,7 +1481,6 @@ class WidgetTarification extends HTMLElement {
           this._render();
           break;
 
-        // Number selectors
         case 'num-inc':
         case 'num-dec': {
           const id = target.dataset.id;
@@ -1606,7 +1499,6 @@ class WidgetTarification extends HTMLElement {
           break;
         }
 
-        // Time selectors
         case 'time-inc':
         case 'time-dec': {
           const id = target.dataset.id;
@@ -1617,7 +1509,6 @@ class WidgetTarification extends HTMLElement {
           break;
         }
 
-        // Duration selectors
         case 'dur-inc':
         case 'dur-dec': {
           const id = target.dataset.id;
@@ -1666,14 +1557,9 @@ class WidgetTarification extends HTMLElement {
   _updateNbPlagesCode() {
     const t = this._tarif;
     const codeMap = { 1: '00', 2: '10', 3: '11' };
-
     for (let i = 0; i < 16; i++) {
       if (t.saisonnalite) {
-        if (i < 8) {
-          t.lignes[i].nbPlagesCode = codeMap[t.nbPlagesHiver];
-        } else {
-          t.lignes[i].nbPlagesCode = codeMap[t.nbPlagesEte];
-        }
+        t.lignes[i].nbPlagesCode = i < 8 ? codeMap[t.nbPlagesHiver] : codeMap[t.nbPlagesEte];
       } else {
         t.lignes[i].nbPlagesCode = codeMap[t.nbPlagesHorsSaison];
       }
@@ -1701,34 +1587,22 @@ class WidgetTarification extends HTMLElement {
   }
 
   _handleTimeChange(id, pos, inc) {
-    // id like "hc1-debut", "hc2-ete-debut", "hsc-debut"
     const parts = id.split('-');
     const isEte = parts.includes('ete');
-    const hcType = parts[0]; // hc1, hc2, hc3, hsc
+    const hcType = parts[0];
     const field = hcType === 'hsc' ? 'hscDebut' : hcType + 'Debut';
-
-    // Determine which lines to modify
     const lines = this._getTargetLines(isEte);
 
     for (const li of lines) {
       if (this._isSpecificDayLine(li)) continue;
       const l = this._tarif.lignes[li];
-      let timeStr = l[field];
-      let digits = timeStr.split('').map(Number);
-
-      // Increment/decrement the digit at pos with wrapping
-      const maxDigits = [
-        [0, 2], // tens of hours: 0-2
-        [0, 9], // units of hours: 0-9
-        [0, 5], // tens of minutes: 0-5
-        [0, 9], // units of minutes: 0-9
-      ];
+      let digits = l[field].split('').map(Number);
+      const maxDigits = [[0, 2],[0, 9],[0, 5],[0, 9]];
 
       digits[pos] = digits[pos] + inc;
       if (digits[pos] > maxDigits[pos][1]) digits[pos] = maxDigits[pos][0];
       if (digits[pos] < maxDigits[pos][0]) digits[pos] = maxDigits[pos][1];
 
-      // Clamp to 23:59
       const h = digits[0] * 10 + digits[1];
       const m = digits[2] * 10 + digits[3];
       if (h > 23) { digits[0] = 2; digits[1] = 3; }
@@ -1741,19 +1615,15 @@ class WidgetTarification extends HTMLElement {
   _handleDurationChange(id, is4Char, inc) {
     const parts = id.split('-');
     const isEte = parts.includes('ete');
-    const hcType = parts[0]; // hc1, hc2, hc3, hsc
-
+    const hcType = parts[0];
     const field = hcType === 'hsc' ? 'hscDuree' : hcType + 'Duree';
-
     const lines = this._getTargetLines(isEte);
 
-    // Duration steps: 1.00, 1.30, 2.00, ..., 8.00 (cyclic)
     const steps = [];
     for (let h = 1; h <= 8; h++) {
       steps.push(h * 60);
       if (h < 8) steps.push(h * 60 + 30);
     }
-    // 1.00, 1.30, 2.00, 2.30, ..., 7.30, 8.00
 
     for (const li of lines) {
       if (this._isSpecificDayLine(li)) continue;
@@ -1796,14 +1666,11 @@ class WidgetTarification extends HTMLElement {
   }
 
   _applyConfigToLines() {
-    const t = this._tarif;
     this._updateNbPlagesCode();
-
-    // Sync p[15] = p[14] when no saisonnalite
-    if (!t.saisonnalite) {
+    if (!this._tarif.saisonnalite) {
       for (let i = 0; i < 8; i++) {
-        const src = t.lignes[i];
-        const dst = t.lignes[i + 8];
+        const src = this._tarif.lignes[i];
+        const dst = this._tarif.lignes[i + 8];
         Object.assign(dst, JSON.parse(JSON.stringify(src)));
       }
     }
@@ -1836,50 +1703,25 @@ class WidgetTarificationEditor extends HTMLElement {
     this._render();
   }
 
-  get _entityBase() {
-    return this._config.entity_base || '';
-  }
-
-  get _title() {
-    return this._config.title || '';
-  }
-
-  get _showLegend() {
-    return this._config.show_legend !== false;
-  }
-
-  get _showDate() {
-    return this._config.show_date !== false;
-  }
-
-  get _showCountdown() {
-    return this._config.show_countdown !== false;
-  }
-
-  get _theme() {
-    return this._config.theme || 'default';
-  }
-
-  get _sensorPTEC() {
-    return this._config.sensor_ptec || '';
-  }
+  get _entityBase() { return this._config.entity_base || ''; }
+  get _title() { return this._config.title || ''; }
+  get _showLegend() { return this._config.show_legend !== false; }
+  get _showDate() { return this._config.show_date !== false; }
+  get _showCountdown() { return this._config.show_countdown !== false; }
+  get _theme() { return this._config.theme || 'default'; }
+  get _sensorPTEC() { return this._config.sensor_ptec || ''; }
 
   _render() {
     if (!this.shadowRoot) return;
 
-    const entityOptions = this._hass ? 
+    const entityOptions = this._hass ?
       Object.keys(this._hass.states)
         .filter(e => e.startsWith('input_text.'))
-        .map(e => {
-          // Extract base name (remove _0, _1, _meta suffix)
-          const base = e.replace(/_(meta|\d+)$/, '');
-          return base;
-        })
-        .filter((v, i, a) => a.indexOf(v) === i) // unique
+        .map(e => e.replace(/_(meta|\d+)$/, ''))
+        .filter((v, i, a) => a.indexOf(v) === i)
         .sort()
       : [];
 
-    // Build list of potential PTEC sensor entities
     const ptecOptions = this._hass ?
       Object.keys(this._hass.states)
         .filter(e => {
@@ -1892,148 +1734,44 @@ class WidgetTarificationEditor extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
-        :host {
-          display: block;
-          font-family: var(--paper-font-body1_-_font-family, 'Roboto', sans-serif);
-        }
-        .editor-container {
-          padding: 16px;
-        }
-        .editor-row {
-          margin-bottom: 16px;
-        }
-        .editor-row label {
-          display: block;
-          font-size: 13px;
-          font-weight: 500;
-          color: var(--primary-text-color, #333);
-          margin-bottom: 6px;
-        }
-        .editor-row .desc {
-          font-size: 11px;
-          color: var(--secondary-text-color, #888);
-          margin-bottom: 6px;
-        }
-        input[type="text"], select {
-          width: 100%;
-          padding: 8px 12px;
-          border: 1px solid var(--divider-color, #e0e0e0);
-          border-radius: 6px;
-          font-size: 14px;
-          box-sizing: border-box;
-          background: var(--card-background-color, white);
-          color: var(--primary-text-color, #333);
-        }
-        input[type="text"]:focus, select:focus {
-          outline: none;
-          border-color: var(--primary-color, #4a90d9);
-        }
-        .toggle-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 8px 0;
-        }
-        .toggle-row label {
-          margin-bottom: 0;
-          flex: 1;
-        }
-        .toggle-switch {
-          position: relative;
-          width: 40px;
-          height: 22px;
-          background: #ccc;
-          border-radius: 11px;
-          cursor: pointer;
-          transition: background 0.3s;
-          flex-shrink: 0;
-        }
-        .toggle-switch.on {
-          background: var(--primary-color, #4a90d9);
-        }
-        .toggle-switch::after {
-          content: '';
-          position: absolute;
-          top: 2px;
-          left: 2px;
-          width: 18px;
-          height: 18px;
-          background: white;
-          border-radius: 50%;
-          transition: transform 0.3s;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-        }
-        .toggle-switch.on::after {
-          transform: translateX(18px);
-        }
-        .section-divider {
-          border: none;
-          border-top: 1px solid var(--divider-color, #e0e0e0);
-          margin: 16px 0;
-        }
-        .section-title {
-          font-size: 14px;
-          font-weight: 600;
-          color: var(--primary-text-color, #333);
-          margin-bottom: 12px;
-        }
-        .help-box {
-          background: var(--secondary-background-color, #f5f5f5);
-          border-radius: 8px;
-          padding: 12px;
-          font-size: 12px;
-          color: var(--secondary-text-color, #666);
-          line-height: 1.5;
-          margin-top: 8px;
-        }
-        .help-box code {
-          background: var(--card-background-color, white);
-          padding: 1px 5px;
-          border-radius: 3px;
-          font-family: monospace;
-          font-size: 11px;
-        }
+        :host { display: block; font-family: var(--paper-font-body1_-_font-family, 'Roboto', sans-serif); }
+        .editor-container { padding: 16px; }
+        .editor-row { margin-bottom: 16px; }
+        .editor-row label { display: block; font-size: 13px; font-weight: 500; color: var(--primary-text-color, #333); margin-bottom: 6px; }
+        .editor-row .desc { font-size: 11px; color: var(--secondary-text-color, #888); margin-bottom: 6px; }
+        input[type="text"], select { width: 100%; padding: 8px 12px; border: 1px solid var(--divider-color, #e0e0e0); border-radius: 6px; font-size: 14px; box-sizing: border-box; background: var(--card-background-color, white); color: var(--primary-text-color, #333); }
+        input[type="text"]:focus, select:focus { outline: none; border-color: var(--primary-color, #4a90d9); }
+        .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+        .toggle-row label { margin-bottom: 0; flex: 1; }
+        .toggle-switch { position: relative; width: 40px; height: 22px; background: #ccc; border-radius: 11px; cursor: pointer; transition: background 0.3s; flex-shrink: 0; }
+        .toggle-switch.on { background: var(--primary-color, #4a90d9); }
+        .toggle-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: white; border-radius: 50%; transition: transform 0.3s; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+        .toggle-switch.on::after { transform: translateX(18px); }
+        .section-divider { border: none; border-top: 1px solid var(--divider-color, #e0e0e0); margin: 16px 0; }
+        .section-title { font-size: 14px; font-weight: 600; color: var(--primary-text-color, #333); margin-bottom: 12px; }
+        .help-box { background: var(--secondary-background-color, #f5f5f5); border-radius: 8px; padding: 12px; font-size: 12px; color: var(--secondary-text-color, #666); line-height: 1.5; margin-top: 8px; }
+        .help-box code { background: var(--card-background-color, white); padding: 1px 5px; border-radius: 3px; font-family: monospace; font-size: 11px; }
       </style>
-
       <div class="editor-container">
-        <!-- Titre personnalisé -->
         <div class="editor-row">
           <label>Titre de la carte</label>
-          <div class="desc">Laissez vide pour "Widget tarification"</div>
           <input type="text" id="title" value="${this._title}" placeholder="Widget tarification">
         </div>
-
-        <!-- Entité de persistance -->
         <div class="editor-row">
           <label>Préfixe des entités de persistance</label>
-          <div class="desc">Préfixe des entités <code>input_text</code> pour sauvegarder la configuration (optionnel)</div>
-          <input type="text" id="entity_base" value="${this._entityBase}" 
-                 placeholder="input_text.widget_tarif" 
-                 list="entity-bases">
-          <datalist id="entity-bases">
-            ${entityOptions.map(e => `<option value="${e}">`).join('')}
-          </datalist>
+          <div class="desc">Préfixe des entités <code>input_text</code> (optionnel)</div>
+          <input type="text" id="entity_base" value="${this._entityBase}" placeholder="input_text.widget_tarif" list="entity-bases">
+          <datalist id="entity-bases">${entityOptions.map(e => `<option value="${e}">`).join('')}</datalist>
         </div>
-
         <hr class="section-divider">
         <div class="section-title">⚡ ZLinky / Linky TIC</div>
-
-        <!-- Sensor PTEC -->
         <div class="editor-row">
           <label>Sensor période tarifaire (PTEC)</label>
-          <div class="desc">Entité ZLinky ou Linky TIC indiquant le tarif en cours (HC/HP/Tempo). Le widget affichera le statut en temps réel.</div>
-          <input type="text" id="sensor_ptec" value="${this._sensorPTEC}" 
-                 placeholder="sensor.zlinky_active_register_tier_delivered" 
-                 list="ptec-entities">
-          <datalist id="ptec-entities">
-            ${ptecOptions.map(e => `<option value="${e}">`).join('')}
-          </datalist>
+          <input type="text" id="sensor_ptec" value="${this._sensorPTEC}" placeholder="sensor.zlinky_active_register_tier_delivered" list="ptec-entities">
+          <datalist id="ptec-entities">${ptecOptions.map(e => `<option value="${e}">`).join('')}</datalist>
         </div>
-
         <hr class="section-divider">
         <div class="section-title">🎨 Affichage</div>
-
-        <!-- Thème -->
         <div class="editor-row">
           <label>Thème couleur</label>
           <select id="theme">
@@ -2043,58 +1781,33 @@ class WidgetTarificationEditor extends HTMLElement {
             <option value="minimal" ${this._theme === 'minimal' ? 'selected' : ''}>Minimaliste</option>
           </select>
         </div>
-
-        <!-- Toggles d'affichage -->
         <div class="toggle-row">
           <label>Afficher la légende (HP/HC/HSC)</label>
           <div class="toggle-switch ${this._showLegend ? 'on' : ''}" data-field="show_legend"></div>
         </div>
-
         <div class="toggle-row">
           <label>Afficher la date</label>
           <div class="toggle-switch ${this._showDate ? 'on' : ''}" data-field="show_date"></div>
         </div>
-
         <div class="toggle-row">
           <label>Afficher le compte à rebours</label>
           <div class="toggle-switch ${this._showCountdown ? 'on' : ''}" data-field="show_countdown"></div>
         </div>
-
-        <hr class="section-divider">
-
-        <div class="help-box">
-          💡 <strong>Persistance :</strong> Par défaut, la configuration des plages HC est sauvegardée dans le navigateur (localStorage). 
-          Pour une persistance qui fonctionne sur tous vos appareils, créez des entités <code>input_text</code> dans votre 
-          <code>configuration.yaml</code> avec le préfixe choisi ci-dessus suivi de <code>_meta</code>, <code>_0</code>, 
-          <code>_1</code>, <code>_2</code>, <code>_3</code>.
-          <br><br>
-          ⚡ <strong>ZLinky / Linky TIC :</strong> Si vous avez un module ZLinky (LiXee) ou une intégration Linky TIC, 
-          renseignez le sensor PTEC pour que le widget affiche le tarif en cours <strong>en temps réel</strong> directement 
-          depuis votre compteur. Compatible HC/HP, Tempo (Bleu/Blanc/Rouge) et EJP.
-          <br><br>
-          ⚙️ <strong>Configuration des plages :</strong> Cliquez sur l'icône ⚙ dans la carte pour configurer vos plages 
-          d'heures creuses selon votre contrat d'électricité.
-        </div>
       </div>
     `;
 
-    // Bind events
     this.shadowRoot.getElementById('title').addEventListener('input', (e) => {
       this._updateConfig('title', e.target.value || undefined);
     });
-
     this.shadowRoot.getElementById('entity_base').addEventListener('input', (e) => {
       this._updateConfig('entity_base', e.target.value || undefined);
     });
-
     this.shadowRoot.getElementById('sensor_ptec').addEventListener('input', (e) => {
       this._updateConfig('sensor_ptec', e.target.value || undefined);
     });
-
     this.shadowRoot.getElementById('theme').addEventListener('change', (e) => {
       this._updateConfig('theme', e.target.value === 'default' ? undefined : e.target.value);
     });
-
     this.shadowRoot.querySelectorAll('.toggle-switch').forEach(toggle => {
       toggle.addEventListener('click', () => {
         const field = toggle.dataset.field;
@@ -2112,54 +1825,42 @@ class WidgetTarificationEditor extends HTMLElement {
       newConfig[key] = value;
     }
     this._config = newConfig;
-
-    // Fire config-changed event for Lovelace
-    const event = new CustomEvent('config-changed', {
+    this.dispatchEvent(new CustomEvent('config-changed', {
       detail: { config: newConfig },
       bubbles: true,
       composed: true,
-    });
-    this.dispatchEvent(event);
+    }));
   }
 }
 
 customElements.define('widget-tarification-editor', WidgetTarificationEditor);
 
 // ============================================================
-// UPDATE MAIN CARD: support new config options
+// THEME SUPPORT
 // ============================================================
 const _origRenderDisplay = WidgetTarification.prototype._renderDisplay;
 WidgetTarification.prototype._renderDisplay = function() {
-  // Apply theme
   const theme = this._config.theme || 'default';
   const themeVars = {
     'default': {},
     'blue': { '--wt-primary': '#3478c6', '--wt-primary-dark': '#2a5fa0', '--wt-orange': '#e8963a' },
-    'dark': { '--wt-primary': '#555', '--wt-primary-dark': '#333', '--wt-bg': '#1e1e1e', '--wt-bg-section': '#2a2a2a', '--wt-text': '#e0e0e0', '--wt-text-light': '#aaa', '--wt-border': '#444' },
+    'dark': { '--wt-primary': '#555', '--wt-primary-dark': '#333' },
     'minimal': { '--wt-primary': '#666', '--wt-primary-dark': '#444' },
   };
   const vars = themeVars[theme] || {};
   Object.entries(vars).forEach(([k, v]) => this.style.setProperty(k, v));
 
-  // Call original render
   let html = _origRenderDisplay.call(this);
 
-  // Apply title override
   if (this._config.title) {
     html = html.replace('Widget tarification', this._config.title);
   }
-
-  // Hide legend if configured
   if (this._config.show_legend === false) {
     html = html.replace(/<div class="legend">[\s\S]*?<\/div>\s*<\/div>/, '</div>');
   }
-
-  // Hide date if configured
   if (this._config.show_date === false) {
     html = html.replace(/📅[^<]*<\/span>/, '</span>');
   }
-
-  // Hide countdown if configured
   if (this._config.show_countdown === false) {
     html = html.replace(/Dans [^<]*<\/span>/, '</span>');
   }
@@ -2167,14 +1868,13 @@ WidgetTarification.prototype._renderDisplay = function() {
   return html;
 };
 
-// Register card
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'widget-tarification',
   name: 'Widget Tarification',
   description: 'Gestion et affichage des plages Heures Creuses / Pleines / Super Creuses',
   preview: true,
-  documentationURL: 'https://github.com/Acidburn1824/widget-tarification',
+  documentationURL: 'https://github.com/Acidburn1824/tarification',
 });
 
-console.info('%c WIDGET-TARIFICATION %c v1.2.0 ', 'color: white; background: #e8a020; font-weight: bold;', 'color: #e8a020; background: white;');
+console.info('%c WIDGET-TARIFICATION %c v1.2.1-transparent ', 'color: white; background: #e8a020; font-weight: bold;', 'color: #e8a020; background: white;');
