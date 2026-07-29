@@ -900,6 +900,17 @@ class WidgetTarification extends HTMLElement {
   }
 
   async _loadConfig() {
+    // HA entities are the source of truth (survive across browsers/devices).
+    // localStorage is only a fallback when HA has nothing stored.
+    if (this._hass) {
+      const storage = new TarificationStorage(this._hass, this._entityBase);
+      const meta = this._hass.states[`${this._entityBase}_meta`];
+      if (meta && String(meta.state).startsWith('chunks:')) {
+        this._tarif = await storage.load();
+        return;
+      }
+    }
+
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       try {
@@ -908,10 +919,7 @@ class WidgetTarification extends HTMLElement {
       } catch (e) { /* ignore */ }
     }
 
-    if (this._hass) {
-      const storage = new TarificationStorage(this._hass, this._entityBase);
-      this._tarif = await storage.load();
-    }
+    this._tarif = new TarificationConfig();
   }
 
   async _saveConfig() {
